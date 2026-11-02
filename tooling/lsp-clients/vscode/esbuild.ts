@@ -1,5 +1,5 @@
 const esbuild = require('esbuild');
-const {cpSync, writeFileSync} = require('fs');
+const {cpSync, readFileSync, writeFileSync} = require('fs');
 const {join, basename} = require('path');
 const {glob} = require('glob');
 
@@ -43,6 +43,22 @@ async function getTestEntries() {
 
     return entries;
 }
+
+/**
+ * mocha's browser build is a UMD script, but mocha marks its package `"type": "module"`, so esbuild
+ * bundles it as ESM without a CommonJS wrapper. Its `module.exports = ...` then overwrites this bundle's
+ * own exports (the test `run` entry point). Hiding `module`/`exports`/`define` makes it register itself
+ * on `globalThis` instead, which is how test/browser/index.browser.ts uses it.
+ */
+const mochaBrowserGlobalPlugin = {
+    name: 'mocha-browser-global',
+    setup(build) {
+        build.onLoad({filter: /[\\/]mocha[\\/]mocha\.js$/}, args => ({
+            contents: `(function (module, exports, define) {\n${readFileSync(args.path, 'utf8')}\n}).call(globalThis);`,
+            loader: 'js',
+        }));
+    }
+};
 
 async function build() {
     // Copy extension files
@@ -104,6 +120,7 @@ async function build() {
         define: {
             'global': 'globalThis'
         },
+        plugins: [mochaBrowserGlobalPlugin],
     });
 
     console.log(`✅ Build complete!`);
